@@ -13,19 +13,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joefazee/learning-go-shop/internal/config"
 	"github.com/joefazee/learning-go-shop/internal/database"
+	"github.com/joefazee/learning-go-shop/internal/interfaces"
 	"github.com/joefazee/learning-go-shop/internal/logger"
+	"github.com/joefazee/learning-go-shop/internal/providers"
 	"github.com/joefazee/learning-go-shop/internal/server"
+	"github.com/joefazee/learning-go-shop/internal/services"
 )
 
 func main() {
-	log := logger.New()
 
+	log := logger.New()
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to load config")
 	}
 
-	// ✅ FIX: database.New ต้องการ value (config.DatabaseConfig)
 	db, err := database.New(cfg.Database)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to connect to database")
@@ -35,12 +37,21 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to get database connection")
 	}
-	defer mainDB.Close()
 
+	defer mainDB.Close()
 	gin.SetMode(cfg.Server.GinMode)
 
-	// ✅ FIX: server.New ต้องการ zerolog.Logger แบบ value
-	srv := server.New(cfg, db, log)
+	authService := services.NewAuthService(db, cfg)
+	productService := services.NewProductService(db)
+	userService := services.NewUserService(db)
+
+	var uploadProvider interfaces.UploadProvider
+	uploadProvider = providers.NewLocalProvider(cfg)
+
+	uploadService := services.NewUploadService(uploadProvider)
+
+	srv := server.New(cfg, db, &log, authService, productService, userService, uploadService)
+
 	router := srv.SetupRoutes()
 
 	httpServer := &http.Server{
@@ -71,4 +82,5 @@ func main() {
 	}
 
 	log.Info().Msg("shutting down database")
+
 }

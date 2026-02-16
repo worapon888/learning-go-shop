@@ -11,13 +11,10 @@ import (
 func New() zerolog.Logger {
 	zerolog.TimeFieldFormat = time.RFC3339
 
-	// ✅ ถ้าไม่ใช่ release ให้ log เป็นแบบอ่านง่าย
 	if os.Getenv("GIN_MODE") != "release" {
-		log.Logger = log.Output(zerolog.ConsoleWriter{
-			Out:        os.Stdout,
-			TimeFormat: time.RFC3339,
-		})
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
 	}
 
 	return log.Logger
+
 }

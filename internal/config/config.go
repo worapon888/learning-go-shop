@@ -56,6 +56,9 @@ type AWSConfig struct {
 type UploadConfig struct {
 	Path        string
 	MaxFileSize int64
+
+	// ✅ เพิ่มจากไฟล์ล่าง: เลือก provider (local | s3)
+	UploadProvider string
 }
 
 func Load() (*Config, error) {
@@ -104,6 +107,9 @@ func Load() (*Config, error) {
 		Upload: UploadConfig{
 			Path:        getEnv("UPLOAD_PATH", "./uploads"),
 			MaxFileSize: maxUploadSize,
+
+			// ✅ เพิ่มจากไฟล์ล่าง
+			UploadProvider: getEnv("UPLOAD_PROVIDER", "local"),
 		},
 	}
 
@@ -118,6 +124,14 @@ func Load() (*Config, error) {
 func validate(cfg *Config) error {
 	if cfg.Server.Port == "" {
 		return errors.New("config: PORT is required")
+	}
+
+	// ✅ validate upload provider
+	switch cfg.Upload.UploadProvider {
+	case "", "local", "s3":
+		// ok (ถ้าว่างถือว่า ok เพราะ default มักเป็น local)
+	default:
+		return fmt.Errorf("config: UPLOAD_PROVIDER must be 'local' or 's3' (got %q)", cfg.Upload.UploadProvider)
 	}
 
 	// ถ้ามี DSN แล้วไม่ต้องบังคับ DB_* ทุกตัว

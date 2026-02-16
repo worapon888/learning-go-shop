@@ -18,7 +18,7 @@ func New(cfg config.DatabaseConfig) (*gorm.DB, error) {
 			"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
 			cfg.Host, cfg.User, cfg.Password, cfg.Name, cfg.Port, cfg.SSLMode, cfg.TimeZone,
 		)
-	}
+	} 
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),

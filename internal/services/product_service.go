@@ -1,0 +1,274 @@
+package services
+
+import (
+	"errors"
+
+	"github.com/joefazee/learning-go-shop/internal/dto"
+	"github.com/joefazee/learning-go-shop/internal/models"
+	"github.com/joefazee/learning-go-shop/internal/utils"
+	"gorm.io/gorm"
+)
+
+type ProductService struct {
+	db *gorm.DB
+}
+
+func NewProductService(db *gorm.DB) *ProductService {
+	return &ProductService{db: db}
+}
+
+// ================== CATEGORY ==================
+
+func (s *ProductService) CreateCategory(req *dto.CreateCategoryRequest) (*dto.CategoryResponse, error) {
+	category := models.Category{
+		Name:        req.Name,
+		Description: req.Description,
+	}
+
+	if err := s.db.Create(&category).Error; err != nil {
+		return nil, err
+	}
+
+	return &dto.CategoryResponse{
+		ID:          category.ID,
+		Name:        category.Name,
+		Description: category.Description,
+		IsActive:    category.IsActive,
+	}, nil
+}
+
+func (s *ProductService) GetCategories() ([]dto.CategoryResponse, error) {
+	var categories []models.Category
+	if err := s.db.Where("is_active = ?", true).Find(&categories).Error; err != nil {
+		return nil, err
+	}
+
+	response := make([]dto.CategoryResponse, len(categories))
+	for i := range categories {
+		response[i] = dto.CategoryResponse{
+			ID:          categories[i].ID,
+			Name:        categories[i].Name,
+			Description: categories[i].Description,
+			IsActive:    categories[i].IsActive,
+		}
+	}
+
+	return response, nil
+}
+
+// PATCH style (ต้องให้ dto.UpdateCategoryRequest ใช้ pointer field)
+func (s *ProductService) UpdateCategory(id uint, req *dto.UpdateCategoryRequest) (*dto.CategoryResponse, error) {
+	var category models.Category
+	if err := s.db.First(&category, id).Error; err != nil {
+		return nil, err
+	}
+
+	if req.Name != nil {
+		category.Name = *req.Name
+	}
+	if req.Description != nil {
+		category.Description = *req.Description
+	}
+	if req.IsActive != nil {
+		category.IsActive = *req.IsActive
+	}
+
+	if err := s.db.Save(&category).Error; err != nil {
+		return nil, err
+	}
+
+	return &dto.CategoryResponse{
+		ID:          category.ID,
+		Name:        category.Name,
+		Description: category.Description,
+		IsActive:    category.IsActive,
+	}, nil
+}
+
+// soft delete (ให้สอดคล้องกับ query is_active=true)
+func (s *ProductService) DeleteCategory(id uint) error {
+	return s.db.Model(&models.Category{}).
+		Where("id = ?", id).
+		Update("is_active", false).Error
+}
+
+// ================== PRODUCT ==================
+
+func (s *ProductService) CreateProduct(req *dto.CreateProductRequest) (*dto.ProductResponse, error) {
+	if err := s.ensureActiveCategory(req.CategoryID); err != nil {
+		return nil, err
+	}
+
+	product := models.Product{
+		CategoryID:  req.CategoryID,
+		Name:        req.Name,
+		Description: req.Description,
+		Price:       req.Price,
+		Stock:       req.Stock,
+		SKU:         req.SKU,
+	}
+
+	if err := s.db.Create(&product).Error; err != nil {
+		return nil, err
+	}
+
+	return s.GetProduct(product.ID)
+}
+
+func (s *ProductService) GetProducts(page, limit int) ([]dto.ProductResponse, *utils.PaginationMeta, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10
+	}
+
+	offset := (page - 1) * limit
+	var products []models.Product
+	var total int64
+
+	s.db.Model(&models.Product{}).Where("is_active = ?", true).Count(&total)
+
+	if err := s.db.Preload("Category").Preload("Images").
+		Where("is_active = ?", true).
+		Offset(offset).Limit(limit).
+		Find(&products).Error; err != nil {
+		return nil, nil, err
+	}
+
+	response := make([]dto.ProductResponse, len(products))
+	for i := range products {
+		response[i] = s.convertToProductResponse(&products[i])
+	}
+
+	totalPages := int((total + int64(limit) - 1) / int64(limit))
+	meta := &utils.PaginationMeta{
+		Page:       page,
+		Limit:      limit,
+		Total:      total,
+		TotalPages: totalPages,
+	}
+
+	return response, meta, nil
+}
+
+func (s *ProductService) GetProduct(id uint) (*dto.ProductResponse, error) {
+	var product models.Product
+
+	// consistent: ต้อง active เท่านั้น
+	if err := s.db.Preload("Category").Preload("Images").
+		Where("id = ? AND is_active = ?", id, true).
+		First(&product).Error; err != nil {
+		return nil, err
+	}
+
+	response := s.convertToProductResponse(&product)
+	return &response, nil
+}
+
+// PATCH style (ต้องให้ dto.UpdateProductRequest ใช้ pointer field)
+func (s *ProductService) UpdateProduct(id uint, req *dto.UpdateProductRequest) (*dto.ProductResponse, error) {
+	var product models.Product
+
+	// update เฉพาะตัวที่ active
+	if err := s.db.Where("id = ? AND is_active = ?", id, true).First(&product).Error; err != nil {
+		return nil, err
+	}
+
+	if req.CategoryID != nil {
+		if err := s.ensureActiveCategory(*req.CategoryID); err != nil {
+			return nil, err
+		}
+		product.CategoryID = *req.CategoryID
+	}
+	if req.Name != nil {
+		product.Name = *req.Name
+	}
+	if req.Description != nil {
+		product.Description = *req.Description
+	}
+	if req.Price != nil {
+		product.Price = *req.Price
+	}
+	if req.Stock != nil {
+		product.Stock = *req.Stock
+	}
+	if req.SKU != nil {
+		product.SKU = *req.SKU
+	}
+	if req.IsActive != nil {
+		product.IsActive = *req.IsActive
+	}
+
+	if err := s.db.Save(&product).Error; err != nil {
+		return nil, err
+	}
+
+	return s.GetProduct(id)
+}
+
+// soft delete
+func (s *ProductService) DeleteProduct(id uint) error {
+	return s.db.Model(&models.Product{}).
+		Where("id = ?", id).
+		Update("is_active", false).Error
+}
+
+// เอามาจากไฟล์ล่าง ✅
+func (s *ProductService) AddProductImage(productID uint, url, altText string) error {
+	var count int64
+	s.db.Model(&models.ProductImage{}).Where("product_id = ?", productID).Count(&count)
+
+	image := models.ProductImage{
+		ProductID: productID,
+		URL:       url,
+		AltText:   altText,
+		IsPrimary: count == 0, // รูปแรกเป็น primary
+	}
+
+	return s.db.Create(&image).Error
+}
+
+func (s *ProductService) convertToProductResponse(product *models.Product) dto.ProductResponse {
+	images := make([]dto.ProductImageResponse, len(product.Images))
+	for i := range product.Images {
+		images[i] = dto.ProductImageResponse{
+			ID:        product.Images[i].ID,
+			URL:       product.Images[i].URL,
+			AltText:   product.Images[i].AltText,
+			IsPrimary: product.Images[i].IsPrimary,
+		}
+	}
+
+	return dto.ProductResponse{
+		ID:          product.ID,
+		CategoryID:  product.CategoryID,
+		Name:        product.Name,
+		Description: product.Description,
+		Price:       product.Price,
+		Stock:       product.Stock,
+		SKU:         product.SKU,
+		IsActive:    product.IsActive,
+		Category: dto.CategoryResponse{
+			ID:          product.Category.ID,
+			Name:        product.Category.Name,
+			Description: product.Category.Description,
+			IsActive:    product.Category.IsActive,
+		},
+		Images: images,
+	}
+}
+
+// ================== helpers ==================
+
+func (s *ProductService) ensureActiveCategory(categoryID uint) error {
+	var c models.Category
+	err := s.db.Where("id = ? AND is_active = ?", categoryID, true).First(&c).Error
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return gorm.ErrRecordNotFound
+	}
+	return err
+}
